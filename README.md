@@ -12,6 +12,6 @@
 ### 参考
 * 関連リポジトリ
    * DropboxからGitへプッシュするバッチのリポジトリ
-      * [https://github.com/m-Inmoat/dbx-git-sync](https://github.com/m-Inmoat/dbx-git-sync)
+      * https://github.com/ms-horiuchi/dbx-git-sync
    * GitからDropboxへ対象ディレクトリを同期するバッチのリポジトリ
-      * [https://github.com/m-Inmoat/git-dbx-sync](https://github.com/m-Inmoat/git-dbx-sync)
+      * https://github.com/ms-horiuchi/git-dbx-sync
