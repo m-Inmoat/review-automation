@@ -18,9 +18,39 @@ Requirements:
 import sys
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import pyocr
 import pyocr.builders
+
+# decode_file_paths.py から関数をインポート
+from decode_file_paths import decode_file_path
+
+
+def preprocess_image(image):
+    """
+    OCR精度向上のための画像前処理
+    
+    Args:
+        image: PIL.Image オブジェクト
+    
+    Returns:
+        前処理済みのPIL.Image オブジェクト
+    """
+    # グレースケール化
+    image = image.convert('L')
+    
+    # コントラスト強調（2倍）
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(2.0)
+    
+    # シャープネス強化
+    image = image.filter(ImageFilter.SHARPEN)
+    
+    # 二値化（白黒はっきりさせる）
+    threshold = 128
+    image = image.point(lambda p: 255 if p > threshold else 0)
+    
+    return image
 
 
 def process_images_to_ocr(image_files_csv: str, output_base_dir: str = "ocr_outputs"):
@@ -60,12 +90,15 @@ def process_images_to_ocr(image_files_csv: str, output_base_dir: str = "ocr_outp
     output_dir.mkdir(parents=True, exist_ok=True)
     print(f"OCR結果ディレクトリ: {output_dir}", file=sys.stderr)
     
-    # 画像ファイルを処理
-    image_files = [f.strip() for f in image_files_csv.split(',') if f.strip()]
+    # 画像ファイルを処理（デコード処理を追加）
+    raw_files = [f.strip() for f in image_files_csv.split(',') if f.strip()]
+    image_files = [decode_file_path(f) for f in raw_files]
     
     if not image_files:
         print("Warning: No image files provided", file=sys.stderr)
         return "", ""
+    
+    print(f"Processing {len(image_files)} image file(s)...", file=sys.stderr)
     
     processed_count = 0
     
@@ -73,6 +106,7 @@ def process_images_to_ocr(image_files_csv: str, output_base_dir: str = "ocr_outp
         img_file = Path(img_path)
         if not img_file.exists():
             print(f"Warning: Image not found: {img_file}", file=sys.stderr)
+            print(f"  Current working directory: {Path.cwd()}", file=sys.stderr)
             continue
         
         try:
@@ -80,6 +114,9 @@ def process_images_to_ocr(image_files_csv: str, output_base_dir: str = "ocr_outp
             
             # 画像を開く
             image = Image.open(img_file)
+            
+            # 画像前処理（精度向上）
+            image = preprocess_image(image)
             
             # OCR実行
             text = tool.image_to_string(
