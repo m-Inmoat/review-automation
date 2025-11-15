@@ -25,6 +25,9 @@ import pyocr.builders
 # decode_file_paths.py から関数をインポート
 from decode_file_paths import decode_file_path
 
+# 二値化の閾値（0-255の範囲で、この値より大きいピクセルは白、以下は黒になる）
+BINARIZATION_THRESHOLD = 128
+
 
 def preprocess_image(image):
     """
@@ -47,8 +50,7 @@ def preprocess_image(image):
     image = image.filter(ImageFilter.SHARPEN)
     
     # 二値化（白黒はっきりさせる）
-    threshold = 128
-    image = image.point(lambda p: 255 if p > threshold else 0)
+    image = image.point(lambda p: 255 if p > BINARIZATION_THRESHOLD else 0)
     
     return image
 
