@@ -82,17 +82,15 @@ def main():
     
     # コードファイルのレビュー
     code_files = 'decoded_files.txt'
-    has_code_files = False
     if Path(code_files).exists():
         print(f"コードファイルのレビューを開始: {code_files}", file=sys.stderr)
-        has_code_files = run_batch_review(code_files, output_dir)
+        run_batch_review(code_files, output_dir)
     
     # OCR結果のレビュー
     ocr_files = 'ocr_files_list.txt'
-    has_ocr_files = False
     if Path(ocr_files).exists():
         print(f"OCR結果のレビューを開始: {ocr_files}", file=sys.stderr)
-        has_ocr_files = run_batch_review(ocr_files, output_dir)
+        run_batch_review(ocr_files, output_dir)
     
     # 結果カウント
     review_count = count_reviews(output_dir)
