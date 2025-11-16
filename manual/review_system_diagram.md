@@ -35,20 +35,20 @@ flowchart TD
   G --> OCRText[OCR テキストファイル]
   OCRText --> E
 
-  note right of C
-    decode_file_paths:
-    path decoding
-    extension filter
-    route OCR candidates
-  end
+   note right of C
+      decode_file_paths:
+      path decoding
+      extension filter
+      route OCR candidates
+   end note
 
-  note right of F
-    gemini_cli_wrapper:
-    upload prompt md
-    reuse cached prompt IDs
-    call Gemini model
-    write error tracebacks to output md
-  end
+   note right of F
+      gemini_cli_wrapper:
+      upload prompt md
+      reuse cached prompt IDs
+      call Gemini model
+      write error tracebacks to output md
+   end note
 ```
 
 ---
@@ -86,8 +86,8 @@ sequenceDiagram
     GEM->>API: generate_content with default prompts
     GEM->>RUN: write review md
 
-    Note over RUN,GEM: NOTE: run_reviews exits non-zero when any review fails; markdown stores traceback.
-    Note over GH,RUN: NOTE: `set -o pipefail` を workflow の該当ステップで有効化しており、Python の非ゼロ終了はステップ失敗として検出されます。
+   Note over RUN,GEM: run_reviews は失敗が1件でもあれば非ゼロ終了し、レビュー Markdown にトレースバックを記録します。
+   Note over GH,RUN: set -o pipefail を有効化しているため、Python の非ゼロ終了はステップ失敗として検出されます。
 ```
 
 ---
