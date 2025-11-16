@@ -4,7 +4,7 @@
 
 ## 図の見方
 - ワークフローは GitHub Actions (`gemini-review.yml`) が起点です。
-- `tj-actions/changed-files` → `scripts/decode_file_paths.py` → `scripts/run_reviews.py` → `scripts/gemini_cli_wrapper.py` の順に処理が進みます。
+- `tj-actions/changed-files` → `scripts/decode_file_paths.py` → `scripts/run_reviews.py` → `scripts/gemini_cli_wrapper.py`の順に処理が進みます。
 - `docs/target-extensions.csv` による拡張子マッピングは `decode_file_paths` と `gemini_cli_wrapper` で参照されます。
 
 ---
@@ -34,13 +34,6 @@ flowchart TD
   G --> OCRText[OCR テキストファイル]
   OCRText --> E
 ```
-
-### 補足
-
-- **decode_file_paths**: path decoding, extension filter, route OCR candidates
-- **gemini_cli_wrapper**: upload prompt md, reuse cached prompt IDs, call Gemini model, write error tracebacks to output md
-
----
 
 ## Mermaid シーケンス図 (sequence)
 実行シーケンスを示します。
@@ -76,19 +69,6 @@ sequenceDiagram
     GEM->>RUN: write review md
 
     Note over RUN,GEM: run_reviews は失敗が1件でもあれば非ゼロ終了し<br/>レビュー Markdown にトレースバックを記録します。
-    Note over GH,RUN: set -o pipefail を有効化しているため<br/>Python の非ゼロ終了はステップ失敗として検出されます。
+    Note over GH,RUN: Python の非ゼロ終了はステップ失敗として検出されます。
 ```
 
-## 実装上の注意点 & 改善提案
-
-### 1. プロンプトの重複アップロードを避ける
-- `gemini_cli_wrapper.py` は `uploaded_prompt_ids` マップを内部で作成していますが、`run_reviews.py` が二回呼ばれると同じ MD を再アップロードします。
-- **対策案**: `run_reviews.py`で一度だけプロンプトをアップロードして File ID をキャッシュする、あるいは `gemini_cli_wrapper` に File ID キャッシュを保存する
-
-### 2. 拡張子マッピングの優先度
-- CSV 設計により、複数の suffix（例: `.spec.ts`）を組み合わせた拡張子候補を `decode_file_paths` と `gemini_cli_wrapper` の双方で同じロジックで生成すること
-
----
-
-
-上記の図と説明は `manual/review_system_design.md` の補足資料です。必要なら図の詳細化（各 CSV 行の例、API 呼び出しのサンプル）を追加します。
