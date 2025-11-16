@@ -75,7 +75,7 @@ def upload_prompt_file(prompt_file_path):
             pass
     file = genai.upload_file(prompt_file_path)
     file = wait_for_file_active(file.name)
-    file_id = getattr(file, "file_id", None) or getattr(file, "name", None)
+    file_id = getattr(file, "name", None) or getattr(file, "file_id", None)
     if not file_id:
         print("Error: Unable to determine uploaded prompt file ID", file=sys.stderr)
         sys.exit(1)
