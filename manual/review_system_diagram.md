@@ -1,6 +1,6 @@
 # Gemini Review Automation — フロー図
 
-この資料は `gemini-review.yml` 起点の実行フローと、各 Python スクリプトがどのように協調するかを図解します。
+この資料は push トリガーのワークフロー `gemini-review.yml` を起点に、各 Python スクリプトがどのように協調するかを図解します。
 
 ## 図の見方
 - ワークフローは GitHub Actions (`gemini-review.yml`) が起点です。
@@ -15,7 +15,8 @@
 ```mermaid
 flowchart TD
   subgraph GH [GitHub Actions]
-    A[gemini-review.yml] -->|changed-files| B[tj-actions/changed-files]
+    A[gemini-review.yml]
+    A -->|changed-files| B[tj-actions/changed-files]
     B --> C[scripts/decode_file_paths.py]
     C --> D(decoded_files.txt & ocr_files_list.txt)
     D --> E[scripts/run_reviews.py]
@@ -38,14 +39,15 @@ flowchart TD
     decode_file_paths:
     - path decoding
     - extension filter
+    - route OCR candidates
   end
 
   note right of F
     gemini_cli_wrapper:
     - upload prompt md
-    - build prompt parts
+    - reuse cached prompt IDs
     - call Gemini model
-    - cache uploaded prompt IDs in `.prompt_upload_cache.json` to avoid re-upload within same workflow
+    - write error tracebacks to output md
   end
 ```
 
@@ -64,15 +66,16 @@ sequenceDiagram
     participant OCR as scripts/process_ocr.py
     participant API as Gemini API
 
-    GH->>CF: get changed files
+    GH->>CF: get changed files (push trigger)
     CF->>DEC: raw file paths
     DEC->>DEC: decode & filter (target-extensions.csv)
     DEC->>GH: write decoded_files.txt, ocr_files_list.txt
 
     GH->>RUN: call run_reviews.py
+    RUN->>RUN: skip early when no targets
     RUN->>GEM: call batch-review (code files, use_prompt_map=True)
     GEM->>API: upload prompt files (md)
-    API->>GEM: file_id
+    API->>GEM: file_id (cached)
     GEM->>API: generate_content with file_data
     API->>GEM: review text
     GEM->>RUN: write review md
@@ -83,7 +86,7 @@ sequenceDiagram
     GEM->>API: generate_content with default prompts
     GEM->>RUN: write review md
 
-    Note over RUN,GEM: NOTE: 現状では gemini_cli_wrapper が呼ばれるたびにプロンプト md を再アップロードしています。
+    Note over RUN,GEM: NOTE: run_reviews exits non-zero when any review fails; markdown stores traceback.
     Note over GH,RUN: NOTE: `set -o pipefail` を workflow の該当ステップで有効化しており、Python の非ゼロ終了はステップ失敗として検出されます。
 ```
 

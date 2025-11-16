@@ -1,52 +1,42 @@
 # GitHub Actions 利用ガイド
 
 ## 概要
-このリポジトリでは、プッシュされたコミットを対象に Gemini API を用いた自動コードレビューを実行し、結果をレポジトリ内にコミットします。ワークフロー定義は `.github/workflows/gemini-review.yml` にあり、変更差分の抽出からレビュー生成、コミットまでをフルオートで行います。
+`.github/workflows/gemini-review.yml` は push をトリガーに、変更ファイルの抽出から Gemini でのレビュー生成、成果物コミットまでを自動化します。レビューはコード／OCR テキスト双方を扱い、失敗時はワークフローを明示的に失敗させます。
 
-## 前提条件
-- **Secrets**:
-  - `GEMINI_API_KEY` (必須): Google Gemini API キー。
-  - `GEMINI_MODEL` (任意): 使用したいモデル名。未設定時は `scripts/gemini_cli_wrapper.py` が `gemini-2.5-flash` を既定で利用します。
-- **依存ファイル**:
-  - `docs/target-extensions.csv`: 監視対象のファイル拡張子を列挙した CSV。**推奨:1 行目にヘッダー**(`extension,base_prompt,custom_prompt`) を置いてください。古いフォーマット（ヘッダー無し）の CSV もサポートしますが、ヘッダー付きが推奨です（CRLF/LF どちらでも可）。
-  - `docs/instruction-review.md`: 基本プロンプト。
-  - `docs/instruction-review-custom.md`: ファイル種別ごとの追加指示（任意）。
-- **スクリプト**: 
-  - `scripts/decode_file_paths.py`: GitHub Actions の出力からファイルパスを安全に復元し、`decoded_files.txt` を生成します。
-  - `scripts/gemini_cli_wrapper.py`: Gemini API にまとめて問い合わせ、レビュー結果を保存します（ただし `scripts/` 配下のコードはレビュー対象から除外されています）。
+## 必要な設定
+- `GEMINI_API_KEY`（必須）: Gemini API キー。未設定のままレビュー対象が存在するとワークフローは失敗します。
+- `GEMINI_MODEL`（任意）: 使用モデルを上書きします。空や未設定の場合は `gemini-2.5-flash` を採用します。
+- `docs/target-extensions.csv`: 監視する拡張子とプロンプトの対応表。ヘッダー付きフォーマット（`extension,base_prompt,custom_prompt`）を推奨します。
+- `docs/instruction-review.md` と `docs/instruction-review-custom.md`: 既定のレビュープロンプト。拡張子別カスタムは `docs/` 配下に追加し、CSV で指定します。
 
-## トリガーと動作フロー
-ワークフローはすべてのブランチへの Push をトリガーに実行されます。処理は以下のステップで構成されています。
+## ワークフローの主なステップ
+1. **チェックアウト**: `actions/checkout@v4` が再コミット用の認証情報を保持したままリポジトリを取得します。
+2. **Python セットアップと依存導入**: Python 3.11 を使用し、`google-generativeai` `pyocr` `pillow` `pytest` をインストールします。
+3. **Git 設定**: `core.quotepath=false` により日本語ファイル名をエスケープしません。
+4. **対象拡張子の読み込み**: `scripts/load_extensions.py` が CSV を解析し、`tj-actions/changed-files` に渡す glob パターンを生成します。
+5. **変更ファイルの抽出**: `tj-actions/changed-files@v45` が対象拡張子の変更を列挙します。`scripts/` や `docs/` などレビュー不要ディレクトリは除外済みです。
+6. **ファイルパスの復元**: 変更があった場合のみ `scripts/decode_file_paths.py` が安全にパスを復元し、`decoded_files.txt` と `ocr_files_list.txt` を作成します。
+7. **OCR 処理**: 画像が検知された場合、Tesseract を導入して `scripts/process_ocr.py` がテキスト化します。生成先は `ocr_outputs/` です。
+8. **レビュー実行**: `scripts/run_reviews.py` がレビュー対象の有無を確認し、存在すれば Gemini を呼び出します。
+   - 出力先は `REVIEW_BASE_DIR`（既定 `review`）配下の日付ディレクトリで、同日複数回は `_1` `_2` … を付与します。
+   - `decoded_files.txt` は拡張子マップを有効にしてレビュー、`ocr_files_list.txt` は既定プロンプトでレビューします。
+   - いずれかのファイルで例外が発生すると Markdown に詳細を書き出し、プロセスは非ゼロ終了します。
+9. **成果物コミット**: レビューが 1 件以上生成された場合のみ `stefanzweifel/git-auto-commit-action@v5` が `files_to_commit` に指定されたディレクトリをコミット・プッシュします。OCR 出力も同様に別コミットで扱います。
+10. **クリーンアップ**: 一時リスト（`decoded_files.txt`, `ocr_files_list.txt`）を削除します。
 
-1. **チェックアウト**: `actions/checkout@v4` でリポジトリを取得し、再コミット用に資格情報を保持します。
-2. **Python セットアップ**: `actions/setup-python@v5` で Python 3.11 を使用。
-3. **依存パッケージのインストール**: `pip install google-generativeai` を実行します。バージョンを固定したい場合は `requirements.txt` を用意し、`pip install -r` に置き換えてください。
-4. **Git 設定**: `core.quotepath=false` を設定し、日本語などのファイル名をエスケープしないようにします。
-5. **レビュー対象拡張子の読み込み**: `docs/target-extensions.csv` を読み込み、`tj-actions/changed-files` の `files` 入力に渡す glob パターン（`**/*.ts` など）を生成します。`tr -d '\r'` を挿んでいるため、CRLF と LF のどちらでも安全に動作します。
-6. **変更ファイルの抽出**: `tj-actions/changed-files@v45` で対象拡張子の変更を洗い出し、カンマ区切りの一覧を出力します。`.d.ts` や `scripts/` 配下のファイルは明示的に除外しています。
-  - 参照: 画像ファイルは `changed-images` ステップで別途抽出します。拡張子に大文字（例: `.PNG`）がある場合もカバーするため、`**/*.PNG` なども含めています。
-7. **ファイル名デコード**: 変更ファイルが存在する場合のみ `scripts/decode_file_paths.py` を実行し、`decoded_files.txt` に UTF-8 のファイルリストを落とします。
-8. **レビュー実行** (`review_process` step):
-   - `review/YYYYMMDD` をベースに、同日に複数実行された場合は `_1`, `_2` ... を付与してユニークなディレクトリを作成します。
-  - `scripts/gemini_cli_wrapper.py batch-review docs/instruction-review.md decoded_files.txt <出力パス> --custom-prompt docs/instruction-review-custom.md` を呼び出し、各ファイルのレビュー結果 (`.md`) を出力します。
-  - `review_process` ステップに `set -o pipefail` を追加しているため、`scripts/run_reviews.py` や `scripts/gemini_cli_wrapper.py` の非ゼロ終了はステップ失敗として検出されます。
-  - 出力された `.md` ファイル数を計測し、1 件以上あれば次ステップへディレクトリパスを共有します。
-9. **コミット&プッシュ**: `stefanzweifel/git-auto-commit-action@v5` がレビュー結果ディレクトリ全体をコミットし、トリガー元と同じブランチにプッシュします。コミットメッセージは `feat: Geminiによる自動コードレビュー結果を追加 (<sha>)` です。
+## 出力とログ
+- `scripts/run_reviews.py` は `files_to_commit` と `review_count` を標準出力に書き、Actions の後続ステップが参照します。
+- 標準エラーにはレビュー対象判定や生成件数、失敗時のトレースバックが出力されます。`🚨 レビュー失敗:` を目印にすると原因特定が容易です。
+- 各レビュー結果は `review/<日付>[_番号]/<ファイル名>.md` に保存されます。内容にはモデル出力またはエラー詳細が含まれます。
 
-## 実行結果の確認
-- `review/<日付>[_N]/` 配下にファイル単位のレビュー (`.md`) が保存されます。
-- Actions 実行ログでは `生成されたレビューファイル数` として作成件数が表示されます。
-- コミットは `gemini-cli-reviewer[bot]` ユーザーで行われます。
-
-## カスタマイズのヒント
-- **対象ファイルの変更**: `docs/target-extensions.csv` に拡張子を追記/削除してください。ヘッダーを残したままにしておけば問題ありません。
-- **プロンプト変更**: `docs/instruction-review.md` または `docs/instruction-review-custom.md` を編集。`--custom-prompt` を外せばカスタム指示を無効化できます。
-- **ジョブの手動実行**: `workflow_dispatch` をトリガーに追加すると Actions から手動で再実行できます。
-- **出力ディレクトリ**: 別の場所へ結果を保存したい場合は `REVIEW_BASE_DIR` 環境変数を変更してください。
+## よくある調整ポイント
+- **対象拡張子の更新**: `docs/target-extensions.csv` に追記・削除すると自動で監視対象が変わります。複数サフィックス（例: `.spec.ts`）も行単位で定義できます。
+- **プロンプトの差し替え**: `docs/` 配下の Markdown を編集するだけで反映されます。拡張子ごとに別 Markdown を割り当てられます。
+- **出力パス変更**: `REVIEW_BASE_DIR` を上書きすることで、レビュー結果の保存先を切り替えられます。
+- **モデル切り替え**: `GEMINI_MODEL` に空でない文字列を設定すると `_resolve_model_name` により優先されます。
 
 ## トラブルシューティング
-- `GEMINI_API_KEY is not set` と表示された場合は Secrets の設定を再確認してください。
-  - 備考: `run_reviews.py` はレビュー対象がない場合は早期終了（非エラー）するようになっています。レビュー対象がある場合は `GEMINI_API_KEY` 未設定で `Error: GEMINI_API_KEY is not set` を出力し、非ゼロで終了します（`set -o pipefail` のためワークフローも失敗します）。
-- `decoded_files.txt not found` が発生する場合、`decode-files` ステップがスキップされていないかログを確認し、`changed-files` の対象拡張子設定を見直してください。
-- API 呼び出しエラーで `.md` が生成されない場合は、`review_process` ステップのログを展開し、`scripts/gemini_cli_wrapper.py` の例外メッセージを確認してください。
-  - OCR について: `ocr_process` ステップは `set -o pipefail` を有効化しています。OCR の入力があるのに出力が生成されない場合、`process_ocr.py` は非ゼロで終了し、ステップは失敗します。
+- **GEMINI_API_KEY が未設定**: レビュー対象がある状態で未設定だと `Error: GEMINI_API_KEY is not set` が表示され、ジョブが失敗します。Secrets を確認してください。
+- **レビュー対象がゼロ**: いずれのリストも空の場合は「No files to review: skip Gemini API calls」と出力し、正常終了します。何もコミットされません。
+- **Gemini API エラー**: 各レビュー Markdown に固定文と併せてエラー内容とトレースバックが保存されます。Gemini 側のレスポンスで「model name format」などが出た場合は `GEMINI_MODEL` の値を確認してください。
+- **OCR 関連エラー**: 画像があるのにテキストが生成されない場合、`scripts/process_ocr.py` が非ゼロで終了しステップが失敗します。`ocr-process` ログを確認し、Tesseract のインストール状態を見直してください。

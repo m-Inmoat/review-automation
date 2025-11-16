@@ -1,61 +1,58 @@
 # Gemini Review Automation Design
 
-このドキュメントは GitHub Actions ワークフロー `gemini-review.yml` と周辺スクリプトの役割をまとめた設計メモです。
+このドキュメントは GitHub Actions ワークフロー `gemini-review.yml` と周辺スクリプトの責務・連携を整理した設計メモです。
 
 ## ワークフロー全体像
 
 - **起点**: `.github/workflows/gemini-review.yml`
-  - `workflow_dispatch` と `pull_request` をトリガーに実行される。
-  - `tj-actions/changed-files` で変更ファイル一覧を抽出し、`scripts/decode_file_paths.py` でエンコード解除と対象拡張子フィルタを行う。
-  - 生成したファイルリスト (`decoded_files.txt`) と OCR 対象 (`ocr_files_list.txt`) を成果物として保存し、レビュー実行ステップに渡す。
-  - 必要な環境変数 (`GEMINI_API_KEY` など) を設定し、後述の Python スクリプトを順に呼び出す。
+  - トリガーは push のみ。全ブランチで発火し、結果も同一ブランチにコミットします。
+  - `tj-actions/changed-files` で変更ファイルを抽出し、`scripts/decode_file_paths.py` に渡してパス復元と拡張子フィルタを行います。
+  - `decoded_files.txt`（コード）と `ocr_files_list.txt`（画像派生テキスト）を生成し、`scripts/run_reviews.py` に渡します。
+  - `GEMINI_API_KEY`・`GEMINI_MODEL`・`REVIEW_BASE_DIR` などの環境変数をステップ単位で設定します。
 
 ## Python スクリプトの役割
 
+### `scripts/load_extensions.py`
+- `docs/target-extensions.csv` を読み込み、`tj-actions/changed-files` に渡す glob パターンを生成します。
+- 複数サフィックス（`.spec.ts` など）も CSV で定義可能です。空行やコメントはスキップします。
+
 ### `scripts/decode_file_paths.py`
-- `tj-actions/changed-files` の出力を読み取り、以下を実施する。
-  - Octal エスケープや UTF-8 をデコードして元のパスに復元。
-  - `docs/target-extensions.csv` に記載された拡張子だけをフィルタして `decoded_files.txt` を生成。
-  - 画像など OCR 対象の拡張子を `ocr_files_list.txt` に出力。
+- `changed-files` の出力（カンマ区切り）を受け取り、以下を実施します。
+  - バックスラッシュエスケープや UTF-8 を復元して実パスを再現。
+  - 拡張子パターンに一致するものを `decoded_files.txt` へ出力。
+  - OCR 対象の拡張子（PNG/JPG 等）は `ocr_files_list.txt` に追記します。
 
 ### `scripts/process_ocr.py`
-- OCR 対象画像の前処理とテキスト化を担当。
-  - 画像のグレースケール化や二値化などを行い精度を向上。
-  - Tesseract (pyocr) を使って日本語 OCR を実行し、結果をテキストファイルとして保存。
-
-### `scripts/load_extensions.py`
-- `docs/target-extensions.csv` を読み込み、拡張子と使用するプロンプトファイルのマッピングを提供するユーティリティ。
-  - 他スクリプトから再利用しやすいように単体機能に分離。
+- 画像リストを受け取り、Tesseract を使って OCR 文字起こしを実施します。
+- 出力は `ocr_outputs/` 配下の `.txt`。入力があるのに出力が 0 件の場合は非ゼロ終了してワークフロー失敗を促します。
 
 ### `scripts/gemini_cli_wrapper.py`
-- Gemini API (google-generativeai) を直接扱う CLI ラッパー。
-  - プロンプト Markdown をアップロードし、ファイル ID を `file_data` としてレビューリクエストに添付。
-  - `batch-review` サブコマンドで複数ファイルのレビューを一括生成する。
-  - `docs/target-extensions.csv` から拡張子別のプロンプトセットを読み込み、該当すれば優先的に適用する。
+- Gemini API を呼び出す CLI。
+- `_resolve_model_name` が明示値→環境変数→デフォルトの優先順でモデルを決定します。
+- プロンプト Markdown をアップロードし、`.prompt_upload_cache.json` にキャッシュして同ワークフロー内で再利用します（キャッシュファイルはリポジトリにコミットされません）。
+- `batch-review` はファイルごとに拡張子マップを評価し、適切なプロンプトパーツを組み合わせて `generate_content` を呼び出します。
+- 例外が発生した場合は詳しいトレースバックを stderr とレビュー Markdown に書き込み、非ゼロ終了で上位に通知します。
 
 ### `scripts/run_reviews.py`
-- GitHub Actions から呼び出される統括スクリプト。
-  - `review/yyyyMMdd` (重複時はインデックス付き) の出力ディレクトリを作成。
-  - `decoded_files.txt` (コード系) を `use_prompt_map=True` で `gemini_cli_wrapper.py batch-review` に渡し、拡張子ごとのプロンプトを利用したレビューを実行。
-  - `ocr_files_list.txt` が存在すればデフォルトプロンプトのみで再度 `batch-review` を呼び出し、OCR 結果レビューを生成。
-  - 変更: `run_reviews.py` はレビュー対象が無い場合に `GEMINI_API_KEY` を要求せず早期終了するようになりました（GitHub Actions上でキー未設定によるジョブ失敗を回避）。
-  - 成果物 (`*.md`) の件数をカウントし、GitHub Actions の `files_to_commit` / `review_count` 出力に設定。
+- 全体オーケストレーター。レビュー対象が無ければ早期終了し、`GEMINI_API_KEY` も要求しません。
+- 出力ディレクトリは `REVIEW_BASE_DIR`（既定 `review`）配下の日付ディレクトリで、同日内の再実行は `_1`, `_2` で重複回避します。
+- `decoded_files.txt` を拡張子マップありでレビューし、`ocr_files_list.txt` が存在すれば既定プロンプトのみで再度レビューを実施します。
+- 生成した Markdown 件数をカウントし、GitHub Actions の `files_to_commit` / `review_count` 出力として公開します。
+- 失敗が一つでもあれば直ちに非ゼロ終了し、ワークフローを失敗扱いにします。
 
 ## プロンプト管理 (`docs/target-extensions.csv`)
 
-- CSV 形式で `拡張子, ベースプロンプト Markdown, カスタムプロンプト Markdown` を定義。
-- `gemini_cli_wrapper.py` で読み込まれ、該当拡張子のレビュー時に指定された Markdown が Gemini にアップロードされる。
-  - 同一ワークフロー内で同一 Markdown を何度もアップロードしないため、アップロードしたプロンプトの File ID を `.prompt_upload_cache.json` に保存して再利用する仕組みを追加しています。
-  - キャッシュはワークスペースルートに保存され、ワークフロー間の共有は行いません。ファイルは `.gitignore` に追加されています。
-- CSV に未登録の拡張子はデフォルト (`instruction-review.md` / `instruction-review-custom.md`) を利用。
+- 各行は `拡張子, ベースプロンプト Markdown, カスタムプロンプト Markdown` の形式です。ベース／カスタムは省略可で、空の場合はデフォルトプロンプトが使われます。
+- `gemini_cli_wrapper.py` は CSV 参照のほか、`docs/` 配下の Markdown を包括的にアップロード対象に含めます。これにより、CSV 未指定の追加ドキュメントもアップロード済みになります。
+- アップロードした Markdown の File ID は `.prompt_upload_cache.json` に保存し、同一ワークフロー内で再アップロードを回避します。キャッシュ破損時は再アップロードして復旧します。
 
 ## 処理フロー概要
 
-1. GitHub Actions が対象変更ファイルを決定し、`decoded_files.txt` / `ocr_files_list.txt` を生成。
-2. `run_reviews.py` が出力ディレクトリを決定し、必要に応じてコードレビューと OCR レビューの 2 回 `gemini_cli_wrapper.py batch-review` を呼び出す。
-3. `gemini_cli_wrapper.py` は該当プロンプト Markdown を Gemini にアップロードし、ファイル ID を添付してレビューを生成。アップロード時やその他の予期しない例外が発生した場合はエラーを stderr に出力し、プロセスは非ゼロで終了します。
-  - 追加: また、同一ワークフロー内の重複アップロードを避けるため、アップロードした Markdown の File ID は `.prompt_upload_cache.json` に保存され、同一ワークフロー内で再利用されます（ワークフロー間共有は行いません）。
-4. 生成されたレビュー Markdown は `review/yyyyMMdd[_N]/*.md` に保存され、件数が GitHub Actions の出力として公開される。
-  - 変更: `process_ocr.py` は入力ファイルが存在するのに OCR 出力（`.txt`）が1つも生成されなかった場合、非ゼロで終了します。これにより、`set -o pipefail` が有効なステップでは OCR の失敗として検出されるようになりました。
+1. Actions が対象拡張子を読み込み、変更ファイルと画像ファイルを抽出します。
+2. `decode_file_paths.py` が `decoded_files.txt` / `ocr_files_list.txt` を生成します。
+3. 必要に応じて OCR を実行し、テキスト化された結果を `run_reviews.py` がレビュー対象として扱います。
+4. `run_reviews.py` がディレクトリを作成し、`gemini_cli_wrapper.py` を通じてコードレビューおよび OCR レビューを実施します。
+5. 各レビュー Markdown には成功時の出力、失敗時のエラーログが記録されます。失敗が含まれるとプロセスが非ゼロ終了し、ワークフロー全体が失敗になります。
+6. 正常終了かつレビューが生成された場合のみ、`files_to_commit` で指定されたディレクトリが自動コミットされます。
 
-これにより、対象拡張子ごとに適切なプロンプトを適用したレビューが自動生成される。
+この構成により、拡張子ごとの専用プロンプトと詳細な失敗レポートを備えた自動レビューを継続的に実行できます。
