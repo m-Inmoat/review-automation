@@ -36,19 +36,23 @@ def determine_review_dir(base_dir: str = "review") -> Path:
     return output_dir
 
 
-def run_batch_review(file_list: str, output_dir: Path) -> bool:
+def run_batch_review(file_list: str, output_dir: Path, use_prompt_map: bool = False) -> bool:
     """バッチレビューを実行"""
     if not Path(file_list).exists():
         return False
     
     try:
-        result = subprocess.run([
+        cmd = [
             'python', 'scripts/gemini_cli_wrapper.py', 'batch-review',
-            'docs/instruction-review.md',
             file_list,
             str(output_dir),
-            '--custom-prompt', 'docs/instruction-review-custom.md'
-        ], capture_output=True, text=True)
+            '--default-prompt', 'docs/instruction-review.md',
+            '--default-custom', 'docs/instruction-review-custom.md'
+        ]
+        if use_prompt_map:
+            cmd.extend(['--prompt-map', 'docs/target-extensions.csv'])
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
         
         if result.returncode != 0:
             print(f"Error during review: {result.stderr}", file=sys.stderr)
@@ -84,7 +88,7 @@ def main():
     code_files = 'decoded_files.txt'
     if Path(code_files).exists():
         print(f"コードファイルのレビューを開始: {code_files}", file=sys.stderr)
-        run_batch_review(code_files, output_dir)
+        run_batch_review(code_files, output_dir, use_prompt_map=True)
     
     # OCR結果のレビュー
     ocr_files = 'ocr_files_list.txt'
