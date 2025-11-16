@@ -37,17 +37,17 @@ flowchart TD
 
   note right of C
     decode_file_paths:
-    - path decoding
-    - extension filter
-    - route OCR candidates
+    path decoding
+    extension filter
+    route OCR candidates
   end
 
   note right of F
     gemini_cli_wrapper:
-    - upload prompt md
-    - reuse cached prompt IDs
-    - call Gemini model
-    - write error tracebacks to output md
+    upload prompt md
+    reuse cached prompt IDs
+    call Gemini model
+    write error tracebacks to output md
   end
 ```
 
