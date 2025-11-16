@@ -1,3 +1,4 @@
+```
 # Gemini Review Automation — フロー図
 
 この資料は push トリガーのワークフロー `gemini-review.yml` を起点に、各 Python スクリプトがどのように協調するかを図解します。
@@ -36,6 +37,7 @@ flowchart TD
 
       %% decode_file_paths: path decoding, extension filter, route OCR candidates
       %% gemini_cli_wrapper: upload prompt md, reuse cached prompt IDs, call Gemini model, write error tracebacks to output md
+
 
 ### 補足
 
