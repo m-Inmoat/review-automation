@@ -28,6 +28,7 @@
 8. **レビュー実行** (`review_process` step):
    - `review/YYYYMMDD` をベースに、同日に複数実行された場合は `_1`, `_2` ... を付与してユニークなディレクトリを作成します。
   - `scripts/gemini_cli_wrapper.py batch-review docs/instruction-review.md decoded_files.txt <出力パス> --custom-prompt docs/instruction-review-custom.md` を呼び出し、各ファイルのレビュー結果 (`.md`) を出力します。
+  - `review_process` ステップに `set -o pipefail` を追加しているため、`scripts/run_reviews.py` や `scripts/gemini_cli_wrapper.py` の非ゼロ終了はステップ失敗として検出されます。
   - 出力された `.md` ファイル数を計測し、1 件以上あれば次ステップへディレクトリパスを共有します。
 9. **コミット&プッシュ**: `stefanzweifel/git-auto-commit-action@v5` がレビュー結果ディレクトリ全体をコミットし、トリガー元と同じブランチにプッシュします。コミットメッセージは `feat: Geminiによる自動コードレビュー結果を追加 (<sha>)` です。
 
@@ -44,5 +45,7 @@
 
 ## トラブルシューティング
 - `GEMINI_API_KEY is not set` と表示された場合は Secrets の設定を再確認してください。
+  - 備考: `run_reviews.py` はレビュー対象がない場合は早期終了（非エラー）するようになっています。レビュー対象がある場合は `GEMINI_API_KEY` 未設定で `Error: GEMINI_API_KEY is not set` を出力し、非ゼロで終了します（`set -o pipefail` のためワークフローも失敗します）。
 - `decoded_files.txt not found` が発生する場合、`decode-files` ステップがスキップされていないかログを確認し、`changed-files` の対象拡張子設定を見直してください。
 - API 呼び出しエラーで `.md` が生成されない場合は、`review_process` ステップのログを展開し、`scripts/gemini_cli_wrapper.py` の例外メッセージを確認してください。
+  - OCR について: `ocr_process` ステップは `set -o pipefail` を有効化しています。OCR の入力があるのに出力が生成されない場合、`process_ocr.py` は非ゼロで終了し、ステップは失敗します。

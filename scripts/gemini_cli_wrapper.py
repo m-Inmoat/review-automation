@@ -2,6 +2,7 @@
 import sys
 import os
 import time
+import json
 import csv
 from pathlib import Path
 import google.generativeai as genai
@@ -32,17 +33,54 @@ def wait_for_file_active(file_name, timeout=120, interval=2):
         time.sleep(interval)
 
 
+PROMPT_CACHE_FILE = Path('.prompt_upload_cache.json')
+
+
+def _load_prompt_cache():
+    try:
+        if PROMPT_CACHE_FILE.exists():
+            return json.loads(PROMPT_CACHE_FILE.read_text(encoding='utf-8'))
+    except Exception:
+        # 読み込み失敗時は空のキャッシュとして扱う
+        pass
+    return {}
+
+
+def _save_prompt_cache(cache):
+    try:
+        PROMPT_CACHE_FILE.write_text(json.dumps(cache, ensure_ascii=False, indent=2), encoding='utf-8')
+    except Exception:
+        # キャッシュ保存失敗は致命的ではない。ログのみ出力する
+        print("Warning: Failed to write prompt cache", file=sys.stderr)
+
+
 def upload_prompt_file(prompt_file_path):
     """プロンプトファイルをアップロードして file_id を返す（内部用、標準出力なし）"""
     if not os.path.exists(prompt_file_path):
         print(f"Error: Prompt file does not exist: {prompt_file_path}", file=sys.stderr)
         sys.exit(1)
+    # キャッシュからチェック
+    cache = _load_prompt_cache()
+    abs_path = os.path.abspath(prompt_file_path)
+    cached = cache.get(abs_path)
+    if cached:
+        try:
+            # キャッシュされた file_id がすでに ACTIVE か確認
+            wait_for_file_active(cached)
+            print(f"Using cached prompt file ID for {prompt_file_path}: {cached}", file=sys.stderr)
+            return cached
+        except Exception:
+            # キャッシュが無効な場合は再アップロードを行う
+            pass
     file = genai.upload_file(prompt_file_path)
     file = wait_for_file_active(file.name)
     file_id = getattr(file, "file_id", None) or getattr(file, "name", None)
     if not file_id:
         print("Error: Unable to determine uploaded prompt file ID", file=sys.stderr)
         sys.exit(1)
+    # キャッシュに保存
+    cache[abs_path] = file_id
+    _save_prompt_cache(cache)
     print(f"Uploaded prompt file. File ID: {file_id}", file=sys.stderr)
     return file_id
 
@@ -112,9 +150,16 @@ def load_prompt_mapping(csv_path):
 def upload_prompt_files(prompt_paths):
     """プロンプトファイルをアップロードしてパスと file_id の対応表を返す"""
     uploaded = {}
+    # 既存のキャッシュを先にロード
+    cache = _load_prompt_cache()
+
     for prompt_path in sorted({os.path.abspath(p) for p in prompt_paths if p}):
         if not os.path.exists(prompt_path):
             print(f"Warning: Prompt file not found: {prompt_path}", file=sys.stderr)
+            continue
+        # キャッシュに存在すればキャッシュ値を利用
+        if prompt_path in cache:
+            uploaded[prompt_path] = cache.get(prompt_path)
             continue
         uploaded[prompt_path] = upload_prompt_file(prompt_path)
     return uploaded
@@ -384,6 +429,15 @@ def main():
             prompt_file_ids.append(sys.argv[custom_id_idx + 1])
 
     run_review(prompt, file_path, model_name, prompt_file_ids if prompt_file_ids else None)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as e:
+        # 予期しない例外はstderrに出力して非ゼロ終了
+        print(f"Unhandled error: {e}", file=sys.stderr)
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()

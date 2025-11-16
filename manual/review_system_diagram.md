@@ -45,6 +45,7 @@ flowchart TD
     - upload prompt md
     - build prompt parts
     - call Gemini model
+    - cache uploaded prompt IDs in `.prompt_upload_cache.json` to avoid re-upload within same workflow
   end
 ```
 
@@ -83,6 +84,7 @@ sequenceDiagram
     GEM->>RUN: write review md
 
     Note over RUN,GEM: NOTE: 現状では gemini_cli_wrapper が呼ばれるたびにプロンプト md を再アップロードしています。
+    Note over GH,RUN: NOTE: `set -o pipefail` を workflow の該当ステップで有効化しており、Python の非ゼロ終了はステップ失敗として検出されます。
 ```
 
 ---
