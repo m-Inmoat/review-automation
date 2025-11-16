@@ -14,7 +14,7 @@ sys.modules['google.generativeai'] = google.generativeai
 import scripts.gemini_cli_wrapper as gcw
 
 
-def test_batch_review_files_logs_original_cause(monkeypatch, tmp_path, capsys):
+def test_batch_review_files_logs_error_message(monkeypatch, tmp_path, capsys):
     # change cwd
     monkeypatch.chdir(tmp_path)
     # set env api key
@@ -70,7 +70,7 @@ def test_batch_review_files_logs_original_cause(monkeypatch, tmp_path, capsys):
     assert mdfile.exists()
     content = mdfile.read_text(encoding='utf-8')
     assert '自動レビューに失敗しました。担当者に確認してください。' in content
-    assert '原始原因' in content
+    assert 'エラー内容' in content
     assert 'model error: simulated failure' in content
 
     captured = capsys.readouterr()

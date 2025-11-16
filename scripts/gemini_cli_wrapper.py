@@ -94,7 +94,7 @@ def upload_prompt_file_cli(prompt_file_path):
 
 
 def build_prompt_file_parts(prompt_file_ids):
-    """プロンプトファイル ID を Gemini で利用可能な file_data パーツへ変換する"""
+    """プロンプトファイル ID を Gemini で利用可能なパーツへ変換する"""
     if not prompt_file_ids:
         return []
     if isinstance(prompt_file_ids, str):
@@ -104,20 +104,11 @@ def build_prompt_file_parts(prompt_file_ids):
     for file_id in prompt_file_ids:
         try:
             uploaded_file = wait_for_file_active(file_id)
+            # Python SDK では File オブジェクトをそのまま使用する
+            parts.append(uploaded_file)
         except Exception:
             print(f"Warning: Failed to load prompt file {file_id}, skipping", file=sys.stderr)
             continue
-        file_uri = getattr(uploaded_file, "uri", None)
-        mime_type = getattr(uploaded_file, "mime_type", "text/plain")
-        if not file_uri:
-            print(f"Warning: Prompt file {file_id} missing uri; skipping", file=sys.stderr)
-            continue
-        parts.append({
-            "file_data": {
-                "file_uri": file_uri,
-                "mime_type": mime_type,
-            }
-        })
     return parts
 
 
